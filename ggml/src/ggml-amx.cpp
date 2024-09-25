@@ -32,6 +32,12 @@ GGML_CALL static void * ggml_backend_amx_buffer_get_base(ggml_backend_buffer_t b
   return (void *)(buffer->context);
 }
 
+GGML_CALL static void ggml_backend_amx_buffer_memset_tensor(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, uint8_t value, size_t offset, size_t size) {
+  memset((char *)tensor->data + offset, value, size);
+
+  GGML_UNUSED(buffer);
+}
+
 GGML_CALL static void ggml_backend_amx_buffer_set_tensor(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, const void * data, size_t offset, size_t size) {
   if (qtype_has_amx_kernels(tensor->type)) {
     ggml_backend_amx_convert_weight(tensor, data, offset, size);
@@ -68,6 +74,7 @@ static ggml_backend_buffer_i ggml_backend_amx_buffer_interface = {
     /* .free_buffer     = */ ggml_backend_amx_buffer_free_buffer,
     /* .get_base        = */ ggml_backend_amx_buffer_get_base,
     /* .init_tensor     = */ NULL, // no initialization required
+    /* .memset_tensor   = */ ggml_backend_amx_buffer_memset_tensor,
     /* .set_tensor      = */ ggml_backend_amx_buffer_set_tensor,
     /* .get_tensor      = */ ggml_backend_amx_buffer_get_tensor,
     /* .cpy_tensor      = */ ggml_backend_amx_buffer_cpy_tensor,
