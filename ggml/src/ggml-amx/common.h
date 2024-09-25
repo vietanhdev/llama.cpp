@@ -57,7 +57,6 @@ inline void balance211(T n, T nth, T ith, T& n_start, T& n_end) {
 
 template <typename func_t>
 inline void parallel_for(int nth, int n, const func_t& f) {
-
 #if defined(_OPENMP)
 #pragma omp parallel num_threads(nth)
   {
@@ -72,6 +71,18 @@ inline void parallel_for(int nth, int n, const func_t& f) {
 
   GGML_UNUSED(nth);
 #endif
+}
+
+// quantized types that have AMX support
+inline bool qtype_has_amx_kernels(const enum ggml_type type) {
+  // TODO: fix padding for vnni format
+  return (type == GGML_TYPE_Q4_0) ||
+      (type == GGML_TYPE_Q4_1);
+      //(type == GGML_TYPE_Q8_0) ||
+      //(type == GGML_TYPE_Q4_K) ||
+      //(type == GGML_TYPE_Q5_K) ||
+      //(type == GGML_TYPE_Q6_K) ||
+      //(type == GGML_TYPE_IQ4_XS);
 }
 
 // ggml backend context

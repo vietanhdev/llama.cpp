@@ -3463,6 +3463,8 @@ static ggml_backend_buffer_type_t llama_default_buffer_type_offload(const llama_
     }
 #elif defined(GGML_USE_CANN)
     buft = ggml_backend_cann_buffer_type(local_gpu);
+#elif defined(GGML_USE_AMX)
+    buft = ggml_backend_amx_buffer_type();
 #endif
 
     if (buft == nullptr) {
@@ -3535,6 +3537,7 @@ static size_t llama_get_device_memory(const llama_model & model, int device) {
 #else
     return 1;
 #endif
+
     GGML_UNUSED(model);
     GGML_UNUSED(local_device);
 }
@@ -5085,7 +5088,12 @@ struct llama_model_loader {
             } else {
                 GGML_ASSERT(weight->idx < files.size());
                 const auto & file = files.at(weight->idx);
-                if (ggml_backend_buffer_is_host(cur->buffer)) {
+#if defined(GGML_USE_AMX)
+                const bool can_use_mmap = false;
+#else
+                const bool can_use_mmap = true;
+#endif
+                if (ggml_backend_buffer_is_host(cur->buffer) && can_use_mmap) {
                     file->seek(weight->offs, SEEK_SET);
                     file->read_raw(cur->data, n_size);
                     if (check_tensors) {
@@ -18580,6 +18588,11 @@ struct llama_model_params llama_model_default_params() {
     result.n_gpu_layers = 999;
 #endif
 
+#ifdef GGML_USE_AMX
+    // by default offload all layers to AMX
+    result.n_gpu_layers = 999;
+#endif
+
     return result;
 }
 
@@ -19044,7 +19057,6 @@ struct llama_context * llama_new_context_with_model(
 
 #if defined(GGML_USE_AMX)
     {
-        printf("### ggml_use_amx from llama.cpp\n");
         ctx->backend_amx = ggml_backend_amx_init();
         if (ctx->backend_amx == nullptr) {
             LLAMA_LOG_ERROR("%s: failed to initialize AMX backend\n", __func__);

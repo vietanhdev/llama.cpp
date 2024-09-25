@@ -142,7 +142,7 @@ struct is_type_qkk : std::integral_constant<bool,
         return __VA_ARGS__();                                                  \
       }                                                                        \
       default:                                                                 \
-        fprintf(stderr, "Unsupported quantized data type\n");                  \
+        fprintf(stderr, "Unsupported quantized data type: %d\n", int(TYPE));   \
     }                                                                          \
   }()
 
@@ -204,6 +204,12 @@ struct tile_config_t{
 
 #define TC_CONFIG_TILE(i, r, cb) tc.rows[i] = r; tc.colsb[i] = cb
 void ggml_tile_config_init(void) {
+  static thread_local bool is_first_time = true;
+
+  if (!is_first_time) {
+    return;
+  }
+
   static thread_local tile_config_t tc;
   tile_config_t current_tc;
   _tile_storeconfig(&current_tc);
@@ -223,6 +229,8 @@ void ggml_tile_config_init(void) {
     TC_CONFIG_TILE(TMM7, 16, 64);
     _tile_loadconfig(&tc);
   }
+
+  is_first_time = false;
 }
 
 // we need an extra 16 * 4B (TILE_N * int32_t) for each NB/KB block for compensation.
@@ -2016,7 +2024,7 @@ struct tinygemm_kernel_vnni<block_q8_K, block_iq4_xs, float, BLOCK_M, BLOCK_N, B
 #define LAUNCH_TINYGEMM_KERNEL_VNNI(NB_SIZE)                                         \
     tinygemm_kernel_vnni<vec_dot_type, type, float, 1, NB_SIZE, blck_size>::apply(   \
         KB, (const char *)wdata + 0 * row_size_A,                                    \
-        (const char *)src0->extra + PACKED_INDEX(nb * kTilesN, 0, KB, TILE_SIZE),    \
+        (const char *)src0->data + PACKED_INDEX(nb * kTilesN, 0, KB, TILE_SIZE),     \
         (float *) dst->data + 0 * N + nb_start, ldc)
 
 template <typename TA, typename TB, typename TC, int BLOCK_K,
@@ -2184,6 +2192,7 @@ void tinygemm_kernel_amx(int M, int N, int KB, const void * RESTRICT _A, const v
         acc_C<TA, TB, is_acc>::apply(C,          ldc, Tile4(C_cur), &A[i], KB, B + PACKED_INDEX(0, i, KB, TILE_SIZE), m0);
         acc_C<TA, TB, is_acc>::apply(C + TILE_N, ldc, Tile6(C_cur), &A[i], KB, B + PACKED_INDEX(1, i, KB, TILE_SIZE), m0);
       });
+
       if (m1 != 0) {
         unpack_A(Tile23, &A[TILE_M * KB + i], KB, m1);
         _tile_loadd(TMM3, Tile23, TILE_K);
@@ -2292,6 +2301,44 @@ void tinygemm_kernel_amx(int M, int N, int KB, const void * RESTRICT _A, const v
 
 } // anonymous namespace
 
+// get the packed tensor size for quantized weights
+size_t ggml_backend_amx_get_alloc_size(const struct ggml_tensor * tensor) {
+  const enum ggml_type TYPE = tensor->type;
+
+  const int K = tensor->ne[0]; // ne0: in_features
+  const int N = tensor->ne[1]; // ne1: out_features
+
+  auto get_tensor_size = [&] {
+    size_t row_size_B{0};
+    GGML_DISPATCH_QTYPES(TYPE, [&] {
+      row_size_B = get_row_size<type, blck_size>(K);
+    });
+    return N * row_size_B;
+  };
+
+  if (qtype_has_amx_kernels(TYPE)) {
+    return get_tensor_size();
+  } else {
+    // for f16, bf16 we don't do packing
+    return ggml_nbytes(tensor);
+  }
+}
+
+// pack weight to vnni format
+void ggml_backend_amx_convert_weight(struct ggml_tensor * tensor, const void * data, size_t offset, size_t size) {
+  const enum ggml_type TYPE = tensor->type;
+
+  const int K = tensor->ne[0]; // ne0: in_features
+  const int N = tensor->ne[1]; // ne1: out_features
+
+  // the buffer ctx is not initialized when .set_tensor is called
+  int n_threads = omp_get_num_threads();
+
+  GGML_DISPATCH_QTYPES(TYPE, [&] {
+     convert_B_packed_format<type, blck_size>((void *)((char *)tensor->data + offset), (const type *)data, N, K, n_threads);
+  });
+}
+
 // NB: mixed dtype gemm with Advanced Matrix Extensions (Intel AMX)
 //
 // src0: weight in shape of {N, K}, quantized
@@ -2371,12 +2418,6 @@ void ggml_backend_amx_mul_mat(ggml_backend_amx_context * ctx, struct ggml_tensor
     // Q4_0, Q4_1, Q8_0 handles 1 TILE_K per blck_size
     // Q4_K, Q5_K, Q6_K, IQ4_XS handles 8 TILE_K per blck_size
     GGML_ASSERT(TILE_K == blck_size || TILE_K * 8 == blck_size);
-    // pack mat B to vnni format
-    if (src0->extra == nullptr) {
-      const size_t row_size_B = get_row_size<type, blck_size>(K);
-      src0->extra = aligned_alloc(64, N * row_size_B);
-      convert_B_packed_format<type, blck_size>((void *)src0->extra, (const type *)src0->data, N, K, n_threads);
-    }
 
     const float * A_data = static_cast<const float *>(src1->data);
     for (int m = 0; m < M; ++m) {
@@ -2384,8 +2425,8 @@ void ggml_backend_amx_mul_mat(ggml_backend_amx_context * ctx, struct ggml_tensor
     }
   });
 
+  //printf("### using amx kernels ... n_threads = %d\n", n_threads);
 
-  GGML_ASSERT(src0->extra != nullptr);
   if (M == 1) {
     // MB = 1 and handle 8 tiles in each block
     constexpr int kTilesN = 4;
@@ -2423,6 +2464,9 @@ void ggml_backend_amx_mul_mat(ggml_backend_amx_context * ctx, struct ggml_tensor
   const int NB = div_up(N, BLOCK_N);
 
   parallel_for(n_threads, MB * NB, [&](int begin, int end) {
+    // init tile config for each thread
+    ggml_tile_config_init();
+
     GGML_DISPATCH_QTYPES(TYPE, [&] {
       const int KB = K / blck_size;
       const int TILE_SIZE = get_tile_size<type>();
@@ -2440,7 +2484,7 @@ void ggml_backend_amx_mul_mat(ggml_backend_amx_context * ctx, struct ggml_tensor
         tinygemm_kernel_amx<vec_dot_type, type, float, blck_size>(
             mb_size, nb_size, KB,
             (const char *)wdata + mb_start * row_size_A,
-            (const char *)src0->extra + PACKED_INDEX(nb * 2, 0, KB, TILE_SIZE),
+            (const char *)src0->data + PACKED_INDEX(nb * 2, 0, KB, TILE_SIZE),
             (float *) dst->data + mb_start * N + nb_start, ldc);
       }
     });

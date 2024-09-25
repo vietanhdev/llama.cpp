@@ -11,6 +11,8 @@ extern "C" {
 // buffer_type API
 GGML_API GGML_CALL ggml_backend_buffer_type_t ggml_backend_amx_buffer_type();
 
+GGML_API GGML_CALL bool ggml_backend_is_amx(ggml_backend_t backend);
+
 // backend API
 GGML_API GGML_CALL ggml_backend_t ggml_backend_amx_init(void);
 
