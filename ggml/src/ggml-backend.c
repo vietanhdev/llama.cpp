@@ -467,7 +467,6 @@ GGML_CALL static void ggml_backend_registry_init(void) {
 #endif
 
 #ifdef GGML_USE_AMX
-    printf("### ggml_use_amx from ggml-backend.c\n");
     extern GGML_CALL void ggml_backend_amx_reg_devices(void);
     ggml_backend_amx_reg_devices();
 #endif
