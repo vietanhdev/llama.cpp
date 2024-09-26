@@ -32,6 +32,10 @@
 #  include "ggml-metal.h"
 #endif
 
+#ifndef __AMX_INT8__
+#undef GGML_USE_AMX
+#endif
+
 #ifdef GGML_USE_AMX
 #  include "ggml-amx.h"
 #endif
