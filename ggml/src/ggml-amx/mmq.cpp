@@ -2326,13 +2326,21 @@ size_t ggml_backend_amx_get_alloc_size(const struct ggml_tensor * tensor) {
 
 // pack weight to vnni format
 void ggml_backend_amx_convert_weight(struct ggml_tensor * tensor, const void * data, size_t offset, size_t size) {
+
+  size_t alloc_size = ggml_backend_amx_get_alloc_size(tensor);
+  GGML_ASSERT(alloc_size == size);
+
   const enum ggml_type TYPE = tensor->type;
 
   const int K = tensor->ne[0]; // ne0: in_features
   const int N = tensor->ne[1]; // ne1: out_features
 
+#if defined(_OPENMP)
   // the buffer ctx is not initialized when .set_tensor is called
   int n_threads = omp_get_num_threads();
+#else
+  int n_threads = 1;
+#endif
 
   GGML_DISPATCH_QTYPES(TYPE, [&] {
      convert_B_packed_format<type, blck_size>((void *)((char *)tensor->data + offset), (const type *)data, N, K, n_threads);
@@ -2424,8 +2432,6 @@ void ggml_backend_amx_mul_mat(ggml_backend_amx_context * ctx, struct ggml_tensor
       from_float<vec_dot_type>(A_data + m * K, (char *)wdata + m * row_size_A, K);
     }
   });
-
-  //printf("### using amx kernels ... n_threads = %d\n", n_threads);
 
   if (M == 1) {
     // MB = 1 and handle 8 tiles in each block

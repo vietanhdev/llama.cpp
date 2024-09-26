@@ -32,11 +32,6 @@
 #  include "ggml-metal.h"
 #endif
 
-// enable AMX only with OPENMP
-#if !defined(__AMX_INT8__) || !defined(GGML_USE_OPENMP)
-#  undef GGML_USE_AMX
-#endif
-
 #ifdef GGML_USE_AMX
 #  include "ggml-amx.h"
 #endif

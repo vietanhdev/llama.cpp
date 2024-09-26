@@ -266,15 +266,23 @@ if (GGML_LLAMAFILE)
 endif()
 
 if (GGML_AMX)
-    message(STATUS "Using AMX")
+    if (CMAKE_COMPILER_IS_GNUCC AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER 11.0)
+    else()
+        set(GGML_AMX OFF)
+        message(WARNING "AMX requires gcc version > 11.0. Turning off GGML_AMX.")
+    endif()
 
-    add_compile_definitions(GGML_USE_AMX)
+    if (GGML_AMX)
+        message(STATUS "Using AMX")
 
-    file(GLOB   GGML_HEADERS_AMX "ggml-amx/*.h")
-    list(APPEND GGML_HEADERS_AMX "../include/ggml-amx.h")
+        list(APPEND GGML_CDEF_PUBLIC GGML_USE_AMX)
 
-    file(GLOB   GGML_SOURCES_AMX "ggml-amx/*.cpp")
-    list(APPEND GGML_SOURCES_AMX "ggml-amx.cpp")
+        file(GLOB   GGML_HEADERS_AMX "ggml-amx/*.h")
+        list(APPEND GGML_HEADERS_AMX "../include/ggml-amx.h")
+
+        file(GLOB   GGML_SOURCES_AMX "ggml-amx/*.cpp")
+        list(APPEND GGML_SOURCES_AMX "ggml-amx.cpp")
+    endif()
 endif()
 
 if (GGML_CUDA)
