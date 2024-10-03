@@ -19115,10 +19115,15 @@ struct llama_model * llama_load_model_from_file(
     // TODO: rework API to give user more control over device selection
     for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
         ggml_backend_dev_t dev = ggml_backend_dev_get(i);
-        // skip the CPU backend since it is handled separately
-        if (ggml_backend_dev_type(dev) != GGML_BACKEND_DEVICE_TYPE_CPU_FULL) {
-            model->devices.push_back(dev);
+        if (ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_CPU_FULL) {
+            // skip the CPU backend since it is handled separately
+            continue;
         }
+
+        size_t free, total; // NOLINT
+        ggml_backend_dev_memory(dev, &free, &total);
+        LLAMA_LOG_INFO("%s: using device %s (%s) - %zu MiB free\n", __func__, ggml_backend_dev_name(dev), ggml_backend_dev_description(dev), free/1024/1024);
+        model->devices.push_back(dev);
     }
 
     int status = llama_model_load(path_model, *model, params);
